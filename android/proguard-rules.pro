@@ -848,6 +848,13 @@
 ##---------------End: Startup Performance Optimizations  ----------
 
 
+##---------------Begin: proguard configuration for PDFBox-Android  ----------
+# PDFBox-Android - Ignore missing optional dependencies
+-dontwarn com.tom_roush.pdfbox.filter.JPXFilter
+-dontwarn com.gemalto.jp2.**
+-keep class com.tom_roush.pdfbox.** { *; }
+##---------------End: proguard configuration for PDFBox-Android  ----------
+
 ##---------------Begin: proguard configuration for Ktor Server (Local Sync)  ----------
 # Ktor Server - Keep server classes for local WiFi sync feature
 # Note: Ktor server uses JDK-specific classes that may not be available on Android
