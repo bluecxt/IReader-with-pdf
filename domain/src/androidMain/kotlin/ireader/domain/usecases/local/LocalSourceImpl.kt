@@ -167,6 +167,10 @@ class LocalSourceImpl(
                 println("LocalSource: Reading as TXT")
                 readTextFile(file)
             }
+            "pdf" -> {
+                println("LocalSource: Reading as PDF")
+                readPdfFile(file)
+            }
             else -> {
                 println("LocalSource: ERROR - Unsupported file extension: ${file.extension}")
                 emptyList()
@@ -175,6 +179,33 @@ class LocalSourceImpl(
         
         println("LocalSource: Read ${result.size} pages")
         result
+    }
+
+    private fun readPdfFile(file: File): List<Page> {
+        val pages = mutableListOf<Page>()
+        try {
+            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context)
+            com.tom_roush.pdfbox.pdmodel.PDDocument.load(file).use { document ->
+                val stripper = com.tom_roush.pdfbox.text.PDFTextStripper()
+                stripper.sortByPosition = true
+                
+                for (i in 0 until document.numberOfPages) {
+                    stripper.startPage = i + 1
+                    stripper.endPage = i + 1
+                    val text = stripper.getText(document)
+                    if (text.isNotBlank()) {
+                        // Using a simple split for LocalSource to match existing TXT pattern
+                        text.split(Regex("\n\n+|\n"))
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                            .forEach { pages.add(Text(it)) }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("LocalSource: Error reading PDF: ${e.message}")
+        }
+        return pages
     }
     
     private fun readEpubFile(file: File): List<Page> {
@@ -293,6 +324,6 @@ class LocalSourceImpl(
     }
     
     companion object {
-        private val supportedFormats = setOf("epub", "txt")
+        private val supportedFormats = setOf("epub", "txt", "pdf")
     }
 }

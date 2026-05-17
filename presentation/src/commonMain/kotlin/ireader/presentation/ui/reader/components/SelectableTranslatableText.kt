@@ -46,10 +46,11 @@ fun SelectableTranslatableText(
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     
     Box(modifier = modifier) {
+        val annotatedText = remember(text) { text.htmlToAnnotatedString() }
         if (selectable) {
             SelectionContainer {
                 Text(
-                    text = text,
+                    text = annotatedText,
                     fontSize = fontSize,
                     fontFamily = fontFamily,
                     textAlign = textAlign,
@@ -86,7 +87,7 @@ fun SelectableTranslatableText(
             }
         } else {
             Text(
-                text = text,
+                text = annotatedText,
                 fontSize = fontSize,
                 fontFamily = fontFamily,
                 textAlign = textAlign,

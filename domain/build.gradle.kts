@@ -158,7 +158,9 @@ kotlin {
                 // Users who need JS sources can install the plugin from Feature Store
                 // This reduces APK size by ~50-90MB
                 // implementation(libs.j2v8)
-
+                implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+                    exclude(group = "org.bouncycastle")
+                }
             }
         }
         val desktopMain by getting {

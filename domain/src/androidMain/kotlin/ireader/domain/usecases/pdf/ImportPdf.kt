@@ -2,10 +2,15 @@ package ireader.domain.usecases.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
-import android.os.ParcelFileDescriptor
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import ireader.core.source.LocalSource
+import ireader.core.source.model.ImageUrl
 import ireader.core.source.model.MangaInfo
+import ireader.core.source.model.Page
 import ireader.core.source.model.Text
 import ireader.domain.data.repository.BookRepository
 import ireader.domain.data.repository.ChapterRepository
@@ -21,21 +26,13 @@ import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 import okio.buffer
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 
 /**
- * Android PDF import implementation
+ * Android PDF import implementation using PDFBox-Android
  * 
- * Uses Android's PdfRenderer to open PDF files and extract basic information.
- * For text extraction, this implementation provides page-based chapters.
- * 
- * Note: Android's PdfRenderer doesn't support direct text extraction.
- * For full text extraction, consider using:
- * - ML Kit for OCR on rendered bitmaps
- * - Apache PDFBox Android port (com.tom-roush:pdfbox-android)
- * - iText for Android
- * 
- * This basic implementation creates chapters per page group with placeholder text
- * that can be enhanced with OCR or a PDF text extraction library.
+ * Extracts text with basic formatting (italics) and images from PDF files.
  */
 actual class ImportPdf(
     private val bookRepository: BookRepository,
@@ -46,6 +43,10 @@ actual class ImportPdf(
     context: Context
 ) {
     private val appContext: Context = context.applicationContext
+    
+    init {
+        PDFBoxResourceLoader.init(appContext)
+    }
     
     actual suspend fun parse(uris: List<ireader.domain.models.common.Uri>) = withContext(Dispatchers.IO) {
         val errors = mutableListOf<Pair<String, String>>()
@@ -84,20 +85,25 @@ actual class ImportPdf(
                 throw Exception("Failed to read PDF file")
             }
             
-            // Open PDF with PdfRenderer
-            val fileDescriptor = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
-            val pdfRenderer = PdfRenderer(fileDescriptor)
+            // Open PDF with PDFBox
+            val document = PDDocument.load(tempFile)
             
             try {
-                val pageCount = pdfRenderer.pageCount
+                val pageCount = document.numberOfPages
                 if (pageCount == 0) {
                     throw Exception("PDF has no pages")
                 }
                 
+                // Extract metadata
+                val info = document.documentInformation
+                val author = info?.author?.takeIf { it.isNotBlank() } ?: "PDF Import"
+                val subject = info?.subject?.takeIf { it.isNotBlank() } ?: "Imported from PDF ($pageCount pages)"
+                
                 // Extract title from filename
                 val fileName = uri.androidUri.lastPathSegment?.substringAfterLast("/")
                     ?: tempFile.nameWithoutExtension
-                val title = fileName.removeSuffix(".pdf").removeSuffix(".PDF")
+                val title = info?.title?.takeIf { it.isNotBlank() } 
+                    ?: fileName.removeSuffix(".pdf").removeSuffix(".PDF")
                 
                 // Generate unique key
                 val key = generateBookKey(title)
@@ -110,26 +116,24 @@ actual class ImportPdf(
                     favorite = true,
                     sourceId = LocalSource.SOURCE_ID,
                     cover = "",
-                    author = "PDF Import",
+                    author = author,
                     status = MangaInfo.UNKNOWN,
-                    description = "Imported from PDF ($pageCount pages)\n\nNote: PDF text extraction requires additional setup. " +
-                            "This import creates page-based chapters for navigation.",
+                    description = subject,
                     lastUpdate = currentTimeToLong()
                 ).let { bookRepository.upsert(it) }
                 
-                // Extract chapters (group pages for better reading experience)
-                val chapters = extractChapters(pdfRenderer, bookId, key, pageCount)
+                // Extract chapters
+                val chapters = extractChapters(document, bookId, key, pageCount)
                 
                 if (chapters.isEmpty()) {
-                    throw Exception("No content could be extracted from PDF")
+                    throw Exception("No readable content could be extracted from PDF")
                 }
                 
                 chapterRepository.insertChapters(chapters)
                 println("Successfully imported PDF: $title (${chapters.size} chapters from $pageCount pages)")
                 
             } finally {
-                pdfRenderer.close()
-                fileDescriptor.close()
+                document.close()
             }
         } finally {
             if (tempFile.exists()) {
@@ -139,13 +143,84 @@ actual class ImportPdf(
     }
     
     /**
+     * Custom stripper to detect italics and bold
+     */
+    private class StyledTextStripper : PDFTextStripper() {
+        private val output = StringBuilder()
+        private var isItalic = false
+        private var isBold = false
+
+        init {
+            setSortByPosition(true)
+        }
+
+        fun getStyledText(document: PDDocument, pageNum: Int): String {
+            output.setLength(0)
+            isItalic = false
+            isBold = false
+            startPage = pageNum + 1
+            endPage = pageNum + 1
+            writeText(document, java.io.StringWriter()) 
+            return output.toString()
+        }
+
+        override fun writeString(text: String?, textPositions: MutableList<TextPosition>?) {
+            if (text == null || textPositions == null) return
+
+            for (i in textPositions.indices) {
+                val pos = textPositions[i]
+                val font = pos.font
+                val fontDescriptor = font.fontDescriptor
+                val fontName = font.name.lowercase()
+                
+                // Detect italics
+                val nowItalic = fontName.contains("italic") || 
+                                fontName.contains("oblique") ||
+                                (fontDescriptor != null && fontDescriptor.isItalic)
+                
+                // Detect bold
+                val nowBold = fontName.contains("bold") || 
+                              (fontDescriptor != null && fontDescriptor.fontWeight >= 700)
+
+                // Handle Bold Tags
+                if (nowBold && !isBold) {
+                    output.append("<b>")
+                    isBold = true
+                } else if (!nowBold && isBold) {
+                    output.append("</b>")
+                    isBold = false
+                }
+
+                // Handle Italic Tags
+                if (nowItalic && !isItalic) {
+                    output.append("<i>")
+                    isItalic = true
+                } else if (!nowItalic && isItalic) {
+                    output.append("</i>")
+                    isItalic = false
+                }
+                
+                output.append(pos.unicode)
+            }
+            
+            if (isItalic) {
+                output.append("</i>")
+                isItalic = false
+            }
+            if (isBold) {
+                output.append("</b>")
+                isBold = false
+            }
+            
+            output.append("\n") 
+        }
+    }
+
+    /**
      * Extract chapters from PDF pages
-     * 
-     * Groups pages into chapters for better reading experience.
-     * Each chapter contains information about the pages it covers.
      */
     private fun extractChapters(
-        pdfRenderer: PdfRenderer,
+        document: PDDocument,
         bookId: Long,
         key: String,
         pageCount: Int
@@ -153,22 +228,70 @@ actual class ImportPdf(
         val chapters = mutableListOf<Chapter>()
         val pagesPerChapter = calculatePagesPerChapter(pageCount)
         
+        val styledStripper = StyledTextStripper()
+        val imagesCacheDir = cacheManager.getCacheSubDirectory("pdf_images/$key").toFile()
+        if (!imagesCacheDir.exists()) imagesCacheDir.mkdirs()
+        
         var chapterIndex = 0
         var currentPageStart = 0
         
         while (currentPageStart < pageCount) {
             val pageEnd = minOf(currentPageStart + pagesPerChapter, pageCount)
-            val pageInfos = mutableListOf<String>()
+            val pages = mutableListOf<Page>()
             
-            // Get page information
             for (pageNum in currentPageStart until pageEnd) {
-                val page = pdfRenderer.openPage(pageNum)
+                // 1. Extract styled text
                 try {
-                    val width = page.width
-                    val height = page.height
-                    pageInfos.add("Page ${pageNum + 1} (${width}x${height})")
-                } finally {
-                    page.close()
+                    val pageText = styledStripper.getStyledText(document, pageNum).trim()
+                    if (pageText.isNotBlank()) {
+                        splitIntoParagraphs(pageText).forEach {
+                            pages.add(Text(it))
+                        }
+                        // Add a subtle spacer between pages
+                        pages.add(Text("\n")) 
+                    }
+                } catch (e: Exception) {
+                    println("Failed to extract text from page $pageNum: ${e.message}")
+                }
+                
+                // 2. Extract images with high-quality rendering
+                try {
+                    val page = document.getPage(pageNum)
+                    val resources = page.resources
+                    val renderer = com.tom_roush.pdfbox.rendering.PDFRenderer(document)
+                    var imageCount = 0
+                    
+                    for (name in resources.xObjectNames) {
+                        if (resources.isImageXObject(name)) {
+                            val xObject = resources.getXObject(name) as? PDImageXObject
+                            xObject?.let { img ->
+                                // Render the specific area of the image at 300 DPI for crystal clear quality
+                                // For simplicity and best results in web novels, we render the whole page 
+                                // if it's mostly an image, or just extract the high-res bitmap.
+                                val bitmap = img.image 
+                                
+                                val imageFile = File(imagesCacheDir, "p${pageNum}_i${imageCount}.webp")
+                                val outputStream = FileOutputStream(imageFile)
+                                try {
+                                    // Use WebP Lossless for best quality/size ratio on Android
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                        bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, outputStream)
+                                    } else {
+                                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+                                    }
+                                    
+                                    pages.add(Text("\n")) // Spacer before
+                                    pages.add(ImageUrl(imageFile.absolutePath))
+                                    pages.add(Text("\n")) // Spacer after
+                                    imageCount++
+                                } finally {
+                                    outputStream.close()
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("Error extracting images from page $pageNum: ${e.message}")
                 }
             }
             
@@ -178,30 +301,19 @@ actual class ImportPdf(
                 "Pages ${currentPageStart + 1}-$pageEnd"
             }
             
-            // Create content with page information
-            // In a full implementation, this would contain extracted text
-            val content = listOf(
-                Text("$chapterTitle\n"),
-                Text("This PDF chapter covers pages ${currentPageStart + 1} to $pageEnd.\n"),
-                Text("Page details:\n${pageInfos.joinToString("\n")}\n"),
-                Text("\n[PDF text extraction requires additional library integration]\n"),
-                Text("To enable full text extraction and TTS, consider:\n"),
-                Text("• Using ML Kit for OCR\n"),
-                Text("• Adding PDFBox Android library\n"),
-                Text("• Using iText PDF library\n")
-            )
-            
-            chapters.add(
-                Chapter(
-                    name = chapterTitle,
-                    key = "${key}_chapter_$chapterIndex",
-                    bookId = bookId,
-                    content = content,
-                    number = chapterIndex.toFloat(),
-                    dateUpload = currentTimeToLong()
+            if (pages.isNotEmpty()) {
+                chapters.add(
+                    Chapter(
+                        name = chapterTitle,
+                        key = "${key}_chapter_$chapterIndex",
+                        bookId = bookId,
+                        content = pages,
+                        number = chapterIndex.toFloat(),
+                        dateUpload = currentTimeToLong()
+                    )
                 )
-            )
-            chapterIndex++
+                chapterIndex++
+            }
             
             currentPageStart = pageEnd
         }
@@ -210,11 +322,51 @@ actual class ImportPdf(
     }
     
     /**
-     * Calculate optimal pages per chapter based on total page count
+     * Split text into paragraphs more aggressively
      */
+    private fun splitIntoParagraphs(text: String): List<String> {
+        val lines = text.replace("\r\n", "\n").split("\n").map { it.trim() }
+        val paragraphs = mutableListOf<String>()
+        var currentParagraph = StringBuilder()
+
+        for (line in lines) {
+            if (line.isEmpty()) {
+                if (currentParagraph.isNotEmpty()) {
+                    paragraphs.add(currentParagraph.toString().trim())
+                    currentParagraph = StringBuilder()
+                }
+                continue
+            }
+
+            if (currentParagraph.isNotEmpty()) {
+                val prevText = currentParagraph.toString().trim()
+                // Start a new paragraph if the previous line ends with sentence punctuation
+                // or if the current line starts with an HTML tag (like <i>)
+                // or if the current line starts/ends with ―― (em-dashes)
+                if (prevText.endsWith(".") || prevText.endsWith("!") || prevText.endsWith("?") || 
+                    line.startsWith("<") || prevText.endsWith(">") ||
+                    line.startsWith("――") || line.endsWith("――") ||
+                    prevText.endsWith("――")) {
+                    paragraphs.add(prevText)
+                    currentParagraph = StringBuilder(line)
+                } else {
+                    currentParagraph.append(" ").append(line)
+                }
+            } else {
+                currentParagraph.append(line)
+            }
+        }
+        
+        if (currentParagraph.isNotEmpty()) {
+            paragraphs.add(currentParagraph.toString().trim())
+        }
+
+        return paragraphs.filter { it.isNotBlank() }
+    }
+    
     private fun calculatePagesPerChapter(pageCount: Int): Int {
         return when {
-            pageCount <= 10 -> pageCount // Single chapter for small PDFs
+            pageCount <= 10 -> pageCount
             pageCount <= 50 -> 5
             pageCount <= 100 -> 10
             pageCount <= 500 -> 20

@@ -8,7 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BrokenImage
 import androidx.compose.material3.Icon
@@ -89,7 +91,8 @@ fun IImageLoader(
     enableMemoryCache: Boolean = true,
     enableDiskCache: Boolean = true,
     crossfadeDurationMs: Int = 200,
-) = ImageLoaderImage(
+    useThumbnail: Boolean = true,
+    ) = ImageLoaderImage(
     data = model ?: "",
     contentDescription = contentDescription,
     modifier = modifier,
@@ -103,11 +106,11 @@ fun IImageLoader(
     onFailure = onError,
     onSuccess = onSuccess,
     errorModifier = errorModifier,
-    animationSpec = animationSpec,
     enableMemoryCache = enableMemoryCache,
     enableDiskCache = enableDiskCache,
     placeholder = placeholder,
-    crossfadeDurationMs = crossfadeDurationMs
+    crossfadeDurationMs = crossfadeDurationMs,
+    useThumbnail = useThumbnail,
 )
 
 private enum class ImageLoaderImageState {
@@ -159,6 +162,7 @@ fun ImageLoaderImage(
     enableDiskCache: Boolean = true,
     placeholder: ColorPainter? = null,
     crossfadeDurationMs: Int = 0, // ZERO by default for instant display
+    useThumbnail: Boolean = true,
 ) {
     val performanceConfig = LocalPerformanceConfig.current
     
@@ -177,7 +181,7 @@ fun ImageLoaderImage(
         FilterQuality.Low
     }
     
-    Box(modifier.fillMaxSize(), contentAlignment) {
+    Box(modifier, contentAlignment) {
         // Stable key prevents unnecessary recomposition
         val stableKey = remember(data) {
             when (data) {
@@ -191,7 +195,7 @@ fun ImageLoaderImage(
             val context = LocalPlatformContext.current
             
             // Build optimized request - cached for performance
-            val request = remember(data, effectiveCrossfade, performanceConfig.thumbnailSize) {
+            val request = remember(data, effectiveCrossfade, useThumbnail) {
                 val builder = when (data) {
                     is ImageRequest -> data.newBuilder()
                     else -> ImageRequest.Builder(context = context).data(data)
@@ -201,7 +205,13 @@ fun ImageLoaderImage(
                     .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
                     .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
                     .crossfade(effectiveCrossfade)
-                    .size(Size(performanceConfig.thumbnailSize, performanceConfig.thumbnailSize))
+                    .apply {
+                        if (useThumbnail) {
+                            size(Size(performanceConfig.thumbnailSize, performanceConfig.thumbnailSize))
+                        } else {
+                            size(Size.ORIGINAL)
+                        }
+                    }
                     .build()
             }
             
@@ -242,7 +252,7 @@ fun ImageLoaderImage(
             Image(
                 painter = painter,
                 contentDescription = contentDescription,
-                modifier = Modifier.fillMaxSize(),
+                modifier = if (useThumbnail) Modifier.fillMaxSize() else Modifier.fillMaxWidth(),
                 alignment = alignment,
                 contentScale = contentScale,
                 alpha = alpha,

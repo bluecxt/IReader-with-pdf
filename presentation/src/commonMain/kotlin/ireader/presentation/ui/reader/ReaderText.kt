@@ -904,14 +904,14 @@ private fun MainText(
             }
             is ImageUrl -> {
                 val isLoading = remember { mutableStateOf(false) }
-                Box(contentAlignment = Alignment.Center) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(top = 12.dp, bottom = 32.dp)) {
                     IImageLoader(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .requiredHeight(500.dp),
+                            .fillMaxWidth(),
                         model = ImageRequest.Builder(context=context).data(page.url.toUri()).diskCachePolicy(CachePolicy.DISABLED).build(),
                         contentDescription = localizeHelper.localize(Res.string.image),
                         contentScale = ContentScale.FillWidth,
+                        useThumbnail = false,
                         onLoading = { isLoading.value = true },
                         onError = { isLoading.value = false },
                         onSuccess = { isLoading.value = false },
