@@ -82,4 +82,7 @@ ksuop
 Suwayomi-Server-master
 mihon
 extensions-source-main
-lnreader-plugins-unminified
+
+lnreader-plugins-unminifiedireader-key.jks.txt
+android/ireader-key.jks
+.env
