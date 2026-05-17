@@ -54,7 +54,6 @@ class LocalSourceImpl(
                 val novelInfo = parseNovelFolder(novelFolder)
                 novels.add(novelInfo)
             } catch (e: Exception) {
-                println("Failed to parse novel folder ${novelFolder.name}: ${e.message}")
             }
         }
         
@@ -64,7 +63,7 @@ class LocalSourceImpl(
     private fun parseNovelFolder(folder: File): MangaInfo {
         val folderName = folder.name
         val detailsFile = File(folder, "details.json")
-        val coverFile = File(folder, "cover.jpg").takeIf { it.exists() }
+        val coverFile = File(folder, "cover.jpg").takeIf { it.exists() } 
             ?: File(folder, "cover.png").takeIf { it.exists() }
         
         // Parse details.json if it exists
@@ -72,7 +71,6 @@ class LocalSourceImpl(
             try {
                 json.decodeFromString<LocalNovelDetails>(detailsFile.readText())
             } catch (e: Exception) {
-                println("Failed to parse details.json in $folderName: ${e.message}")
                 null
             }
         } else null
@@ -107,7 +105,6 @@ class LocalSourceImpl(
                     val chapterInfo = parseChapterFile(file, novelKey, index)
                     chapters.add(chapterInfo)
                 } catch (e: Exception) {
-                    println("Failed to parse chapter file ${file.name}: ${e.message}")
                 }
             }
         
@@ -128,56 +125,42 @@ class LocalSourceImpl(
     }
     
     override suspend fun readChapterFile(chapterKey: String): List<Page> = withContext(Dispatchers.IO) {
-        println("LocalSource: Reading chapter with key: $chapterKey")
-        
         // Extract novel folder and file name from key
         // Format: local_local_FolderName|||FileName.ext
         val withoutPrefix = chapterKey.removePrefix("local_local_")
-        println("LocalSource: After removing prefix: $withoutPrefix")
         
         val parts = withoutPrefix.split("|||")
         if (parts.size != 2) {
-            println("LocalSource: ERROR - Could not split key into parts. Parts: $parts")
             return@withContext emptyList()
         }
         
         val folderName = parts[0]
         val fileName = parts[1]
-        println("LocalSource: Folder: $folderName, File: $fileName")
         
         val localDir = getLocalDirectory()
-        println("LocalSource: Local directory: ${localDir.absolutePath}")
         
         val novelFolder = File(localDir, folderName)
         val file = File(novelFolder, fileName)
-        println("LocalSource: Looking for file: ${file.absolutePath}")
-        println("LocalSource: File exists: ${file.exists()}")
         
         if (!file.exists()) {
-            println("LocalSource: ERROR - File does not exist!")
             return@withContext emptyList()
         }
         
         val result = when (file.extension.lowercase()) {
             "epub" -> {
-                println("LocalSource: Reading as EPUB")
                 readEpubFile(file)
             }
             "txt" -> {
-                println("LocalSource: Reading as TXT")
                 readTextFile(file)
             }
             "pdf" -> {
-                println("LocalSource: Reading as PDF")
                 readPdfFile(file)
             }
             else -> {
-                println("LocalSource: ERROR - Unsupported file extension: ${file.extension}")
                 emptyList()
             }
         }
         
-        println("LocalSource: Read ${result.size} pages")
         result
     }
 
@@ -203,7 +186,6 @@ class LocalSourceImpl(
                 }
             }
         } catch (e: Exception) {
-            println("LocalSource: Error reading PDF: ${e.message}")
         }
         return pages
     }
@@ -243,12 +225,10 @@ class LocalSourceImpl(
                             }
                         }
                     } catch (e: Exception) {
-                        println("Failed to read EPUB content: ${e.message}")
                     }
                 }
             }
         } catch (e: Exception) {
-            println("Failed to read EPUB file: ${e.message}")
         }
         
         return pages
@@ -263,7 +243,6 @@ class LocalSourceImpl(
                 .filter { it.isNotBlank() }
                 .map { Text(it) }
         } catch (e: Exception) {
-            println("Failed to read text file: ${e.message}")
             emptyList()
         }
     }
