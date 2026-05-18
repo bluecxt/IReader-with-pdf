@@ -17,6 +17,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   BuildBinaries:
     name: Build application packages
@@ -414,7 +417,7 @@ jobs:
         with:
           artifacts: "*/binaries/main/*/*.*,*/jars/*.jar,**/IReader-*.apk,**/*.AppImage,**/*.AppImage.zsync,**/*.sha256"
           draft: true
-          token: ${{ secrets.WINGET_PUBLISH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           replacesArtifacts: true
           tag: ${{ github.event.inputs.release-tag }}
