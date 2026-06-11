@@ -36,8 +36,8 @@ class CommunityHubScreenSpec {
             onPopularBooks = {
                 navController.navigate(NavigationRoutes.popularBooks)
             },
-            onAllReviews = {
-                navController.navigate(NavigationRoutes.allReviews)
+            onProfile = {
+                navController.navigate(NavigationRoutes.profile)
             },
             onCharacterArtGallery = {
                 navController.navigate(NavigationRoutes.characterArtUpload)
@@ -69,19 +69,7 @@ class CommunityHubScreenSpec {
             onDeveloperPortal = {
                 navController.navigate(NavigationRoutes.developerPortal)
             },
-            onBadgeStore = {
-                navController.navigate(NavigationRoutes.badgeStore)
-            },
-            onNFTBadge = {
-                navController.navigate(NavigationRoutes.nftBadge)
-            },
-            onBadgeManagement = {
-                navController.navigate(NavigationRoutes.badgeManagement)
-            },
             isAdmin = vm.isAdmin.value,
-            onAdminBadgeVerification = {
-                navController.navigate(NavigationRoutes.adminBadgeVerification)
-            },
             onAdminUserPanel = {
                 navController.navigate(NavigationRoutes.adminUserPanel)
             }

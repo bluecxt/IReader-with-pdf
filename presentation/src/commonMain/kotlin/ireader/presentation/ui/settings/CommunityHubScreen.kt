@@ -38,7 +38,7 @@ fun CommunityHubScreen(
     onBack: () -> Unit,
     onLeaderboard: () -> Unit,
     onPopularBooks: () -> Unit,
-    onAllReviews: () -> Unit,
+    onProfile: () -> Unit = {},
     onCharacterArtGallery: () -> Unit,
     onReadingBuddy: () -> Unit = {},
     onMyQuotes: () -> Unit = {},
@@ -49,11 +49,7 @@ fun CommunityHubScreen(
     onFeatureStore: () -> Unit = {},
     onPluginRepository: () -> Unit = {},
     onDeveloperPortal: () -> Unit = {},
-    onBadgeStore: () -> Unit,
-    onNFTBadge: () -> Unit,
-    onBadgeManagement: () -> Unit,
     isAdmin: Boolean = false,
-    onAdminBadgeVerification: () -> Unit = {},
     onAdminUserPanel: () -> Unit = {},
 ) {
     val localizeHelper = requireNotNull(LocalLocalizeHelper.current) { "LocalLocalizeHelper not provided" }
@@ -140,13 +136,13 @@ fun CommunityHubScreen(
             
             item {
                 SettingsItem(
-                    title = localize(Res.string.community_reviews),
-                    description = "Read reviews from other readers",
-                    icon = Icons.Filled.RateReview,
-                    onClick = onAllReviews
+                    title = "Your Profile",
+                    description = "Level, achievements, titles, stones & daily check-in",
+                    icon = Icons.Filled.AccountCircle,
+                    onClick = onProfile
                 )
             }
-            
+
             // Creative Section
             item {
                 SettingsSectionHeader(
@@ -273,41 +269,6 @@ fun CommunityHubScreen(
                 )
             }
             
-            // Badges & Customization Section
-            item {
-                SettingsSectionHeader(
-                    title = localize(Res.string.badges_customization),
-                    icon = Icons.Filled.Star
-                )
-            }
-            
-            item {
-                SettingsItem(
-                    title = localize(Res.string.badge_store),
-                    description = "Purchase unique badges to customize your profile",
-                    icon = Icons.Outlined.AccountBalanceWallet,
-                    onClick = onBadgeStore
-                )
-            }
-            
-            item {
-                SettingsItem(
-                    title = localize(Res.string.nft_badge),
-                    description = "Verify NFT ownership to unlock exclusive badge",
-                    icon = Icons.Filled.Star,
-                    onClick = onNFTBadge
-                )
-            }
-            
-            item {
-                SettingsItem(
-                    title = localize(Res.string.manage_badges),
-                    description = "Customize which badges appear on your profile and reviews",
-                    icon = Icons.Outlined.Settings,
-                    onClick = onBadgeManagement
-                )
-            }
-            
             // Admin Section (only visible to admins)
             if (isAdmin) {
                 item {
@@ -316,16 +277,7 @@ fun CommunityHubScreen(
                         icon = Icons.Filled.AdminPanelSettings
                     )
                 }
-                
-                item {
-                    SettingsItem(
-                        title = localize(Res.string.badge_verification),
-                        description = "Review and approve badge purchase requests",
-                        icon = Icons.Outlined.VerifiedUser,
-                        onClick = onAdminBadgeVerification
-                    )
-                }
-                
+
                 item {
                     SettingsItem(
                         title = localizeHelper.localize(Res.string.user_management),

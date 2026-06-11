@@ -34,7 +34,7 @@ class LeaderboardRepositoryImpl(
     private data class LeaderboardDto(
         @SerialName("id") val id: String? = null,
         @SerialName("user_id") val user_id: String,
-        @SerialName("username") val username: String,
+        @SerialName("username") val username: String = "Reader",
         @SerialName("total_reading_time_minutes") val total_reading_time_minutes: Long,
         @SerialName("total_chapters_read") val total_chapters_read: Int = 0,
         @SerialName("books_completed") val books_completed: Int = 0,
@@ -146,7 +146,41 @@ class LeaderboardRepositoryImpl(
         return getLeaderboard(limit = limit, offset = offset)
     }
     
+    override suspend fun getUserLeaderboardEntry(userId: String): Result<UserLeaderboardStats?> =
+        RemoteErrorMapper.withErrorMapping {
+            val queryResult = backendService.query(
+                table = "leaderboard",
+                filters = mapOf("user_id" to userId)
+            ).getOrThrow()
+
+            val dto = queryResult.firstOrNull()?.let {
+                json.decodeFromJsonElement(LeaderboardDto.serializer(), it)
+            } ?: return@withErrorMapping null
+
+            dto.toUserLeaderboardStats()
+        }
+
+    private fun LeaderboardDto.toUserLeaderboardStats(): UserLeaderboardStats {
+        val readerLevel = ireader.domain.models.entities.ReaderLevel.fromMinutes(total_reading_time_minutes)
+        return UserLeaderboardStats(
+            userId = user_id,
+            username = username,
+            totalReadingTimeMinutes = total_reading_time_minutes,
+            totalChaptersRead = total_chapters_read,
+            booksCompleted = books_completed,
+            readingStreak = reading_streak,
+            hasBadge = has_badge,
+            badgeType = badge_type,
+            lastSyncedAt = parseTimestamp(updated_at),
+            level = readerLevel.level,
+            levelTitle = readerLevel.title,
+            xp = readerLevel.currentXp,
+            xpToNextLevel = readerLevel.xpToNextLevel
+        )
+    }
+
     private fun LeaderboardDto.toDomain(rank: Int): LeaderboardEntry {
+        val readerLevel = ireader.domain.models.entities.ReaderLevel.fromMinutes(total_reading_time_minutes)
         return LeaderboardEntry(
             id = id,
             userId = user_id,
@@ -155,7 +189,11 @@ class LeaderboardRepositoryImpl(
             rank = rank,
             hasBadge = has_badge,
             badgeType = badge_type,
-            updatedAt = parseTimestamp(updated_at)
+            updatedAt = parseTimestamp(updated_at),
+            level = readerLevel.level,
+            levelTitle = readerLevel.title,
+            xp = readerLevel.currentXp,
+            xpToNextLevel = readerLevel.xpToNextLevel
         )
     }
     

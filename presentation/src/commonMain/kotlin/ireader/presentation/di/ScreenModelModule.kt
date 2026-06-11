@@ -54,16 +54,14 @@ val screenModelModule = module {
     factory {
         ireader.presentation.ui.community.PopularBooksViewModel(
             popularBooksRepository = get(),
-            bookRepository = get()
+            bookRepository = get(),
+            communityVotesRepository = getOrNull(),
+            announcementsRepository = getOrNull(),
+            discordWidgetRepository = getOrNull(),
+            catalogStore = getOrNull()
         )
     }
-    
-    factory {
-        ireader.presentation.ui.community.AllReviewsViewModel(
-            allReviewsRepository = get()
-        )
-    }
-    
+
     // Glossary ViewModel - Community feature for managing book glossaries
     // Supports both local book glossaries and global glossaries with cloud sync
     factory {

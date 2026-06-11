@@ -38,15 +38,15 @@ import ireader.domain.usecases.reader.ReaderUseCasesAggregate
 import ireader.domain.usecases.reader.ScreenAlwaysOn
 import ireader.domain.usecases.translate.TranslationEnginesManager
 import ireader.domain.utils.extensions.ioDispatcher
-import ireader.domain.utils.removeIf
 import ireader.i18n.LAST_CHAPTER
 import ireader.i18n.NO_VALUE
 import ireader.i18n.UiText
-import ireader.i18n.resources.*
+import ireader.i18n.resources.Res
 import ireader.i18n.resources.something_wrong_with_book
 import ireader.presentation.core.toComposeColor
 import ireader.presentation.core.toDomainColor
 import ireader.presentation.ui.core.viewmodel.BaseViewModel
+import ireader.presentation.ui.reader.ReaderConstants
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -104,20 +104,13 @@ class ReaderScreenViewModel(
     val ttsViewModel: ReaderTTSViewModel,
     val statisticsViewModel: ReaderStatisticsViewModel,
 ) : BaseViewModel() {
-    
-    companion object {
-        /** Delay (ms) after a remote fetch completes before notifying ChapterController.
-         *  This ensures the DB insert is fully committed so ChapterController's loadChapter
-         *  finds content and doesn't try to re-fetch from remote. */
-        private const val FETCH_TO_CONTROLLER_DELAY_MS = 300L
-        
-        /** Delay (ms) before starting preload of the next chapter after the current
-         *  chapter's remote fetch completes. This prevents two remote fetches from
-         *  hitting the source server simultaneously. */
-        private const val PRELOAD_AFTER_FETCH_DELAY_MS = 500L
-    }
 
-    
+    /** Scroll manager for handling scroll position persistence */
+    private val scrollManager = ReaderScrollManager(
+        scope = scope,
+        chapterRepository = readerUseCasesAggregate.chapterRepository
+    )
+
     // Convenience accessors for aggregate use cases (backward compatibility)
     val getBookUseCases get() = readerUseCasesAggregate.getBookUseCases
     val getChapterUseCase get() = readerUseCasesAggregate.getChapterUseCase
@@ -321,49 +314,31 @@ class ReaderScreenViewModel(
      */
     fun saveScrollPosition(scrollPosition: Long) {
         val chapter = stateChapter ?: return
-        
+
         // Update in-memory state immediately
-        _currentScrollPosition = scrollPosition
-        
+        scrollManager.updatePosition(scrollPosition)
+
         // Also update the state's currentChapter.lastPageRead so it's reflected in the cached ViewModel
         updateSuccessState { state ->
             state.copy(
                 currentChapter = state.currentChapter.copy(lastPageRead = scrollPosition)
             )
         }
-        
-        // Save to database asynchronously
-        scope.launch {
-            try {
-                // Use the repository's dedicated updateLastPageRead method
-                // which only updates the lastPageRead field without touching content
-                readerUseCasesAggregate.chapterRepository.updateLastPageRead(chapter.id, scrollPosition)
-            } catch (e: Exception) {
-                Log.error("Failed to save scroll position", e)
-            }
-        }
+
+        // Save to database asynchronously via scroll manager
+        scrollManager.saveScrollPosition(chapter.id, scrollPosition)
     }
-    
-    // Track the current scroll position (used for saving when navigating away)
-    private var _currentScrollPosition: Long = 0L
-    val currentScrollPosition: Long get() = _currentScrollPosition
-    
+
+    /** Current scroll position (delegated to scrollManager) */
+    val currentScrollPosition: Long get() = scrollManager.currentScrollPosition
+
     /**
      * Force save the current scroll position to the database immediately.
      * This should be called before navigating to a new chapter.
      */
     fun saveCurrentScrollPositionToDatabase() {
         val chapter = stateChapter ?: return
-        val position = _currentScrollPosition
-        if (position > 0) {
-            scope.launch {
-                try {
-                    readerUseCasesAggregate.chapterRepository.updateLastPageRead(chapter.id, position)
-                } catch (e: Exception) {
-                    Log.error("Failed to force save scroll position", e)
-                }
-            }
-        }
+        scrollManager.forceSaveScrollPosition(chapter.id)
     }
     
     /**
@@ -785,7 +760,7 @@ class ReaderScreenViewModel(
                 chapterController.dispatch(ChapterCommand.LoadBook(bookId))
 
                 // Wait for chapters to load from ChapterController
-                delay(100)
+                delay(ReaderConstants.CHAPTER_CONTROLLER_INIT_DELAY_MS)
 
                 // Setup initial chapter
                 setupChapters(book, catalog, bookId, chapterId)
@@ -1029,7 +1004,7 @@ class ReaderScreenViewModel(
                 // NOW it's safe to notify ChapterController - the chapter has content,
                 // so ChapterController.loadChapter() will skip remote fetch.
                 // Add a small delay to ensure the DB insert has fully committed.
-                delay(FETCH_TO_CONTROLLER_DELAY_MS)
+                delay(ReaderConstants.FETCH_TO_CONTROLLER_DELAY_MS)
                 chapterController.dispatch(ChapterCommand.LoadChapter(filteredChapter.id))
                 
                 // Check chapter health after content loads
@@ -1261,7 +1236,7 @@ class ReaderScreenViewModel(
             try {
                 // Add a small delay to avoid racing with any in-progress DB operations
                 // from the current chapter's fetch/insert cycle
-                delay(PRELOAD_AFTER_FETCH_DELAY_MS)
+                delay(ReaderConstants.PRELOAD_AFTER_FETCH_DELAY_MS)
                 
                 // NOTE: We intentionally do NOT dispatch ChapterCommand.PreloadNextChapter here.
                 // ChapterController.preloadNextChapter() uses loadChapterContentUseCase which
@@ -1328,7 +1303,7 @@ class ReaderScreenViewModel(
                     currentState.chapters.drop(currentIndex + 1).take(count).forEach { chapter ->
                         if (!preloadedChapters.containsKey(chapter.id)) {
                             preloadChapter(chapter)
-                            delay(500)
+                            delay(ReaderConstants.PRELOAD_AFTER_FETCH_DELAY_MS)
                         }
                     }
                 }
@@ -2002,7 +1977,7 @@ class ReaderScreenViewModel(
     fun makeSettingTransparent() {
         settingsViewModel.isSettingChanging = true
         scope.launch {
-            delay(100)
+            delay(ReaderConstants.SETTINGS_CHANGE_RESET_DELAY_MS)
             settingsViewModel.isSettingChanging = false
         }
     }

@@ -173,7 +173,6 @@ class AdminUserRepositoryImpl(
                     icon = dto.icon ?: dto.imageUrl ?: "",
                     category = dto.category ?: "general",
                     rarity = dto.rarity,
-                    price = dto.price,
                     type = parseBadgeType(dto.type),
                     badgeRarity = parseBadgeRarity(dto.rarity),
                     imageUrl = dto.imageUrl ?: "",
@@ -233,7 +232,6 @@ class AdminUserRepositoryImpl(
     private fun parseBadgeType(type: String): BadgeType {
         return when (type.uppercase()) {
             "PURCHASABLE" -> BadgeType.PURCHASABLE
-            "NFT_EXCLUSIVE" -> BadgeType.NFT_EXCLUSIVE
             "ACHIEVEMENT" -> BadgeType.ACHIEVEMENT
             else -> BadgeType.ACHIEVEMENT
         }

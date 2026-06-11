@@ -12,12 +12,9 @@ import androidx.navigation.navArgument
 import androidx.savedstate.read
 import ireader.domain.catalogs.CatalogStore
 import ireader.presentation.core.ui.AboutSettingSpec
-import ireader.presentation.core.ui.AdminBadgeVerificationScreenSpec
 import ireader.presentation.core.ui.AdvanceSettingSpec
 import ireader.presentation.core.ui.AppearanceScreenSpec
 import ireader.presentation.core.ui.BackupAndRestoreScreenSpec
-import ireader.presentation.core.ui.BadgeManagementScreenSpec
-import ireader.presentation.core.ui.BadgeStoreScreenSpec
 import ireader.presentation.core.ui.BookDetailScreenSpec
 import ireader.presentation.core.ui.BrowseSettingsScreenSpec
 import ireader.presentation.core.ui.CategoryScreenSpec
@@ -33,7 +30,6 @@ import ireader.presentation.core.ui.GeneralScreenSpec
 import ireader.presentation.core.ui.GlobalSearchScreenSpec
 import ireader.presentation.core.ui.GoogleDriveBackupScreenSpec
 import ireader.presentation.core.ui.LocalNavigationViewModelStore
-import ireader.presentation.core.ui.NFTBadgeScreenSpec
 import ireader.presentation.core.ui.NavigationViewModelStore
 import ireader.presentation.core.ui.ReaderScreenSpec
 import ireader.presentation.core.ui.ReaderSettingSpec
@@ -127,31 +123,13 @@ fun CommonNavHost(
         composable(NavigationRoutes.supabaseConfig) {
             ireader.presentation.ui.settings.sync.SupabaseConfigScreen().Content()
         }
-        
-        // Badge routes
-        composable(NavigationRoutes.badgeStore) {
-            BadgeStoreScreenSpec().Content()
-        }
-        composable(NavigationRoutes.nftBadge) {
-            NFTBadgeScreenSpec().Content()
-        }
-        composable(NavigationRoutes.badgeManagement) {
-            BadgeManagementScreenSpec().Content()
-        }
-        composable(NavigationRoutes.adminBadgeVerification) {
-            AdminBadgeVerificationScreenSpec().Content()
-        }
-        
+
         composable(NavigationRoutes.leaderboard) {
             ireader.presentation.core.ui.LeaderboardScreenSpec().Content()
         }
-        
+
         composable(NavigationRoutes.popularBooks) {
             ireader.presentation.core.ui.PopularBooksScreenSpec().Content()
-        }
-        
-        composable(NavigationRoutes.allReviews) {
-            ireader.presentation.core.ui.AllReviewsScreenSpec().Content()
         }
         
         // Reading Hub - unified statistics, buddy, and quotes screen
@@ -642,19 +620,7 @@ fun CommonNavHost(
         composable("deepSeekLogin") {
             DeepSeekLoginScreenSpec().Content()
         }
-        composable(NavigationRoutes.badgeStore) {
-            BadgeStoreScreenSpec().Content()
-        }
-        composable(NavigationRoutes.badgeManagement) {
-            BadgeManagementScreenSpec().Content()
-        }
-        composable(NavigationRoutes.adminBadgeVerification) {
-            AdminBadgeVerificationScreenSpec().Content()
-        }
-        composable(NavigationRoutes.nftBadge) {
-            NFTBadgeScreenSpec().Content()
-        }
-        
+
         composable(
             route = "sourceDetail/{sourceId}",
             arguments = listOf(

@@ -1,9 +1,10 @@
 package ireader.domain.usecases.backup.lnreader
 
-import ireader.domain.models.lnreader.*
+import ireader.domain.models.lnreader.LNReaderBackup
+import ireader.domain.models.lnreader.LNReaderCategory
+import ireader.domain.models.lnreader.LNReaderNovel
+import ireader.domain.models.lnreader.LNReaderVersion
 import kotlinx.serialization.json.Json
-import okio.Buffer
-import okio.BufferedSource
 import okio.Source
 import okio.buffer
 
@@ -19,12 +20,8 @@ import okio.buffer
  * - download.zip - Downloaded chapter content (optional)
  */
 class LNReaderBackupParser {
-    
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
-    }
+
+
     
     /**
      * Parse a complete LNReader backup from Okio Source
@@ -99,6 +96,11 @@ class LNReaderBackupParser {
     }
     
     companion object {
+        val json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+        }
         /**
          * Check if the given bytes represent an LNReader backup
          * Uses platform-specific ZIP detection
@@ -118,3 +120,12 @@ expect suspend fun parseBackupPlatform(bytes: ByteArray): LNReaderBackup
  * Platform-specific LNReader backup detection
  */
 expect fun isLNReaderBackupPlatform(bytes: ByteArray): Boolean
+
+/**
+ * Platform-specific chapter content extraction from download.zip.
+ * Extracts chapter HTML content from the download.zip file contained in the backup.
+ *
+ * @param backupBytes The main backup ZIP file bytes
+ * @return Map of chapter ID to HTML content string
+ */
+expect fun extractChapterContentPlatform(backupBytes: ByteArray): Map<Int, String>

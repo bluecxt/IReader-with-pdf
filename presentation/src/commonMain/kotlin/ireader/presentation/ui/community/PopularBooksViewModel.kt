@@ -1,7 +1,11 @@
 package ireader.presentation.ui.community
 
 import androidx.compose.runtime.Stable
+import ireader.domain.catalogs.CatalogStore
+import ireader.domain.data.repository.AnnouncementsRepository
 import ireader.domain.data.repository.BookRepository
+import ireader.domain.data.repository.CommunityVotesRepository
+import ireader.domain.data.repository.DiscordWidgetRepository
 import ireader.domain.data.repository.PopularBooksRepository
 import ireader.domain.models.remote.PopularBook
 import ireader.presentation.ui.core.viewmodel.BaseViewModel
@@ -25,18 +29,41 @@ import ireader.domain.utils.extensions.currentTimeToLong
 @Stable
 class PopularBooksViewModel(
     private val popularBooksRepository: PopularBooksRepository,
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    private val communityVotesRepository: CommunityVotesRepository? = null,
+    private val announcementsRepository: AnnouncementsRepository? = null,
+    private val discordWidgetRepository: DiscordWidgetRepository? = null,
+    private val catalogStore: CatalogStore? = null
 ) : BaseViewModel() {
-    
+
     private val _state = MutableStateFlow(PopularBooksScreenState())
     val state: StateFlow<PopularBooksScreenState> = _state.asStateFlow()
-    
+
     private var lastLoadTime = 0L
     private val minLoadInterval = 2000L // 2 seconds rate limit
     private val pageSize = 10
-    
+
     init {
         loadInitialBooks()
+        loadAnnouncements()
+        loadDiscordPresence()
+    }
+
+    private fun loadDiscordPresence() {
+        val repo = discordWidgetRepository ?: return
+        scope.launch {
+            val count = repo.getOnlineCount()
+            if (count != null) _state.update { it.copy(discordOnline = count) }
+        }
+    }
+
+    private fun loadAnnouncements() {
+        val repo = announcementsRepository ?: return
+        scope.launch {
+            repo.getAnnouncements(limit = 5).onSuccess { list ->
+                _state.update { it.copy(announcements = list) }
+            }
+        }
     }
     
     private fun loadInitialBooks() {
@@ -54,6 +81,7 @@ class PopularBooksViewModel(
                         )
                     }
                     lastLoadTime = currentTimeToLong()
+                    rebuildGroups()
                     // Lookup local books for covers
                     lookupLocalBooks(books)
                 }
@@ -106,6 +134,8 @@ class PopularBooksViewModel(
                         )
                     }
                     lastLoadTime = currentTimeToLong()
+                    rebuildGroups()
+                    lookupLocalBooks(newBooks)
                 }
                 .onFailure { error ->
                     _state.update { current ->
@@ -122,6 +152,7 @@ class PopularBooksViewModel(
         _state.update { current ->
             current.copy(
                 books = emptyList(),
+                groups = emptyList(),
                 currentPage = 0,
                 hasMore = true,
                 error = null
@@ -130,14 +161,14 @@ class PopularBooksViewModel(
         loadInitialBooks()
     }
     
-    fun checkBookInLibrary(bookId: String, title: String, sourceId: Long, onResult: (BookNavigationAction) -> Unit) {
+    fun checkBookInLibrary(bookId: String, title: String, sourceId: Long, sourceName: String, onResult: (BookNavigationAction) -> Unit) {
         scope.launch {
             _state.update { it.copy(loadingBookIds = it.loadingBookIds + bookId) }
-            
+
             try {
                 // Try to find book in local library by title and source
                 val localBook = bookRepository.findDuplicateBook(title, sourceId)
-                
+
                 if (localBook != null) {
                     // Found in library - open it
                     onResult(BookNavigationAction.OpenLocalBook(localBook.id))
@@ -184,9 +215,80 @@ class PopularBooksViewModel(
                     // Ignore lookup errors
                 }
             }
+            rebuildGroups()
         }
     }
     
+    /** Collapse duplicate titles (across sources) into single grouped entries. */
+    private fun rebuildGroups() {
+        _state.update { current ->
+            val groups = current.books
+                .groupBy { normalizeTitle(it.title) }
+                .map { (key, variants) ->
+                    val byReaders = variants.sortedByDescending { it.readerCount }
+                    val withLocal = variants.firstOrNull { it.localBookId != null }
+                    val cover = variants.firstNotNullOfOrNull { it.coverUrl }
+                    PopularBookGroup(
+                        key = key,
+                        title = byReaders.first().title,
+                        coverUrl = cover,
+                        description = variants.firstNotNullOfOrNull { it.description },
+                        totalReaders = variants.sumOf { it.readerCount },
+                        lastRead = variants.maxOf { it.lastRead },
+                        localBookId = withLocal?.localBookId,
+                        sources = byReaders.map {
+                            BookSourceVariant(
+                                sourceId = it.sourceId,
+                                sourceName = it.sourceName.ifBlank { "Source ${it.sourceId}" },
+                                bookId = it.bookId,
+                                bookUrl = it.bookUrl,
+                                readers = it.readerCount,
+                            )
+                        }.distinctBy { it.sourceId },
+                    )
+                }
+                .sortedByDescending { it.totalReaders }
+            current.copy(groups = groups)
+        }
+    }
+
+    fun openBookDetail(group: PopularBookGroup) {
+        _state.update { it.copy(selectedBook = group) }
+    }
+
+    fun dismissBookDetail() {
+        _state.update { it.copy(selectedBook = null) }
+    }
+
+    /** Open a specific source variant: local book if owned, else if source installed
+     *  go to global search, else prompt to install the source. */
+    fun openSource(group: PopularBookGroup, variant: BookSourceVariant, onResult: (BookNavigationAction) -> Unit) {
+        scope.launch {
+            _state.update { it.copy(resolvingSourceFor = group.key) }
+            try {
+                val local = runCatching { bookRepository.findDuplicateBook(group.title, variant.sourceId) }.getOrNull()
+                when {
+                    local != null -> onResult(BookNavigationAction.OpenLocalBook(local.id))
+                    catalogStore?.get(variant.sourceId) != null -> onResult(BookNavigationAction.OpenGlobalSearch(group.title))
+                    else -> onResult(BookNavigationAction.SourceMissing(variant.sourceName))
+                }
+            } finally {
+                _state.update { it.copy(resolvingSourceFor = null) }
+            }
+        }
+    }
+
+    /** Cast a free daily Power-Stone vote for a community book (drives Trending). */
+    fun vote(bookId: String) {
+        val repo = communityVotesRepository ?: return
+        if (_state.value.votedBookIds.contains(bookId)) return
+        scope.launch {
+            repo.vote(bookId).onSuccess { recorded ->
+                if (recorded) _state.update { it.copy(votedBookIds = it.votedBookIds + bookId) }
+            }
+        }
+    }
+
     fun clearError() {
         _state.update { it.copy(error = null) }
     }

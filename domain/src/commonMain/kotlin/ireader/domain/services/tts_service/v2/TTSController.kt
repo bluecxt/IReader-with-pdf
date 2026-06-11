@@ -46,8 +46,43 @@ class TTSController(
     companion object {
         private const val TAG = "TTSController"
     }
-    
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // ========== Validation Helpers ==========
+
+    /** Validate that a book and chapter are loaded. Returns null with logged warning if not. */
+    private fun requireBookAndChapter(): Pair<Book, Chapter>? {
+        val currentState = _state.value
+        val book = currentState.book
+        val chapter = currentState.chapter
+        if (book == null || chapter == null) {
+            Log.warn { "$TAG: Operation requires loaded book/chapter, but none found" }
+            return null
+        }
+        return book to chapter
+    }
+
+    /** Validate that content is loaded. Returns false with logged warning if not. */
+    private fun requireContent(operation: String): Boolean {
+        if (!_state.value.hasContent) {
+            Log.warn { "$TAG: $operation requires content, but none loaded" }
+            return false
+        }
+        return true
+    }
+
+    /** Validate paragraph index is within bounds. */
+    private fun isValidParagraphIndex(index: Int): Boolean {
+        val currentState = _state.value
+        return index >= 0 && index < currentState.paragraphs.size
+    }
+
+    /** Validate chunk index is within bounds. */
+    private fun isValidChunkIndex(index: Int): Boolean {
+        val currentState = _state.value
+        return index >= 0 && index < currentState.totalChunks
+    }
     
     // Mutex to ensure commands are processed sequentially
     private val commandMutex = Mutex()
@@ -74,7 +109,7 @@ class TTSController(
      * Commands are processed sequentially using a mutex to prevent race conditions
      */
     fun dispatch(command: TTSCommand) {
-        Log.warn { "$TAG: dispatch($command)" }
+        Log.debug { "$TAG: dispatch($command)" }
         
         scope.launch {
             commandMutex.withLock {
@@ -134,17 +169,17 @@ class TTSController(
     // ========== Lifecycle ==========
     
     private fun initialize() {
-        Log.warn { "$TAG: initialize()" }
+        Log.debug { "$TAG: initialize()" }
         
         if (engine == null) {
             val currentEngineType = _state.value.engineType
             engine = when (currentEngineType) {
                 EngineType.NATIVE -> {
-                    Log.warn { "$TAG: Creating native engine" }
+                    Log.debug { "$TAG: Creating native engine" }
                     nativeEngineFactory()
                 }
                 EngineType.GRADIO -> {
-                    Log.warn { "$TAG: Creating Gradio engine" }
+                    Log.debug { "$TAG: Creating Gradio engine" }
                     val config = gradioConfig
                     if (config != null && gradioEngineFactory != null) {
                         gradioEngineFactory.invoke(config) ?: run {
@@ -170,7 +205,7 @@ class TTSController(
      * User can tap play to reinitialize and resume.
      */
     private suspend fun stopAndRelease() {
-        Log.warn { "$TAG: stopAndRelease()" }
+        Log.debug { "$TAG: stopAndRelease()" }
         
         pendingPlay = false
         engine?.stop()
@@ -196,7 +231,7 @@ class TTSController(
      * Full cleanup - resets everything including content.
      */
     private fun cleanup() {
-        Log.warn { "$TAG: cleanup()" }
+        Log.debug { "$TAG: cleanup()" }
         
         pendingPlay = false
         engine?.stop()
@@ -217,7 +252,7 @@ class TTSController(
     }
     
     private suspend fun handleEngineEvent(event: EngineEvent) {
-        Log.warn { "$TAG: handleEngineEvent($event)" }
+        Log.debug { "$TAG: handleEngineEvent($event)" }
         
         when (event) {
             is EngineEvent.Ready -> {
@@ -225,7 +260,7 @@ class TTSController(
                 
                 // If there's a pending play, execute it now
                 if (pendingPlay) {
-                    Log.warn { "$TAG: Engine ready, executing pending play" }
+                    Log.debug { "$TAG: Engine ready, executing pending play" }
                     pendingPlay = false
                     play()
                 }
@@ -262,13 +297,13 @@ class TTSController(
         
         // Auto-initialize engine if it was released
         if (engine == null) {
-            Log.warn { "$TAG: play() - Engine is null, reinitializing..." }
+            Log.debug { "$TAG: play() - Engine is null, reinitializing..." }
             initialize()
         }
         
         if (engine?.isReady() != true) {
             // Engine is initializing (async), queue the play for when it's ready
-            Log.warn { "$TAG: play() - Engine not ready, queuing play" }
+            Log.debug { "$TAG: play() - Engine not ready, queuing play" }
             pendingPlay = true
             _state.update { it.copy(playbackState = PlaybackState.LOADING) }
             return
@@ -325,7 +360,7 @@ class TTSController(
         }
         
         if (itemsToPrecache.isNotEmpty()) {
-            Log.warn { "$TAG: Precaching ${itemsToPrecache.size} upcoming paragraphs" }
+            Log.debug { "$TAG: Precaching ${itemsToPrecache.size} upcoming paragraphs" }
             engine?.precacheNext(itemsToPrecache)
         }
     }
@@ -401,7 +436,7 @@ class TTSController(
         val currentState = _state.value
         val result = mergeResult ?: return
         
-        Log.warn { "$TAG: handleChunkCompleted() - chunk ${currentState.currentChunkIndex}/${result.chunks.size}" }
+        Log.debug { "$TAG: handleChunkCompleted() - chunk ${currentState.currentChunkIndex}/${result.chunks.size}" }
         
         if (currentState.canGoNextChunk) {
             // Auto-advance to next chunk
@@ -470,10 +505,13 @@ class TTSController(
     }
     
     private suspend fun jumpToParagraph(index: Int) {
+        if (!isValidParagraphIndex(index)) {
+            Log.warn { "$TAG: jumpToParagraph($index) - invalid index, ignoring" }
+            return
+        }
+
         val currentState = _state.value
-        if (index < 0 || index >= currentState.paragraphs.size) return
-        
-        Log.warn { "$TAG: jumpToParagraph($index) - chunkModeEnabled=${currentState.chunkModeEnabled}" }
+        Log.debug { "$TAG: jumpToParagraph($index) - chunkModeEnabled=${currentState.chunkModeEnabled}" }
         
         val wasPlaying = currentState.isPlaying
         engine?.stop()
@@ -485,7 +523,7 @@ class TTSController(
             
             if (chunkIndex != null) {
                 val chunk = result.chunks.getOrNull(chunkIndex)
-                Log.warn { "$TAG: jumpToParagraph - found chunk $chunkIndex for paragraph $index" }
+                Log.debug { "$TAG: jumpToParagraph - found chunk $chunkIndex for paragraph $index" }
                 
                 _state.update {
                     it.copy(
@@ -517,31 +555,24 @@ class TTSController(
     }
     
     private suspend fun nextChapter() {
-        val currentState = _state.value
-        val book = currentState.book ?: return
-        val chapter = currentState.chapter ?: return
-        
-        Log.warn { "$TAG: nextChapter() - current chapter: ${chapter.id}" }
-        
-        val wasPlaying = currentState.isPlaying
+        val (book, chapter) = requireBookAndChapter() ?: return
+
+        Log.debug { "$TAG: nextChapter() - current chapter: ${chapter.id}" }
+
+        val wasPlaying = _state.value.isPlaying
         engine?.stop()
-        
+
         _state.update { it.copy(playbackState = PlaybackState.LOADING) }
-        
+
         try {
-            // Get next chapter ID using contentLoader (TTS-specific content handling)
             val nextChapterId = contentLoader.getNextChapterId(book.id, chapter.id)
-            
+
             if (nextChapterId != null) {
-                Log.warn { "$TAG: Loading next chapter: $nextChapterId" }
-                
-                // Load chapter content for TTS (with paragraph parsing)
+                Log.debug { "$TAG: Loading next chapter: $nextChapterId" }
                 loadChapter(book.id, nextChapterId, 0)
-                if (wasPlaying) {
-                    play()
-                }
+                if (wasPlaying) { play() }
             } else {
-                Log.warn { "$TAG: No next chapter available" }
+                Log.debug { "$TAG: No next chapter available" }
                 _state.update { it.copy(playbackState = PlaybackState.STOPPED) }
             }
         } catch (e: Exception) {
@@ -549,33 +580,26 @@ class TTSController(
             handleError(TTSError.ContentLoadFailed(e.message ?: "Failed to load next chapter"))
         }
     }
-    
+
     private suspend fun previousChapter() {
-        val currentState = _state.value
-        val book = currentState.book ?: return
-        val chapter = currentState.chapter ?: return
-        
-        Log.warn { "$TAG: previousChapter() - current chapter: ${chapter.id}" }
-        
-        val wasPlaying = currentState.isPlaying
+        val (book, chapter) = requireBookAndChapter() ?: return
+
+        Log.debug { "$TAG: previousChapter() - current chapter: ${chapter.id}" }
+
+        val wasPlaying = _state.value.isPlaying
         engine?.stop()
-        
+
         _state.update { it.copy(playbackState = PlaybackState.LOADING) }
-        
+
         try {
-            // Get previous chapter ID using contentLoader (TTS-specific content handling)
             val prevChapterId = contentLoader.getPreviousChapterId(book.id, chapter.id)
-            
+
             if (prevChapterId != null) {
-                Log.warn { "$TAG: Loading previous chapter: $prevChapterId" }
-                
-                // Load chapter content for TTS (with paragraph parsing)
+                Log.debug { "$TAG: Loading previous chapter: $prevChapterId" }
                 loadChapter(book.id, prevChapterId, 0)
-                if (wasPlaying) {
-                    play()
-                }
+                if (wasPlaying) { play() }
             } else {
-                Log.warn { "$TAG: No previous chapter available" }
+                Log.debug { "$TAG: No previous chapter available" }
                 _state.update { it.copy(playbackState = PlaybackState.STOPPED) }
             }
         } catch (e: Exception) {
@@ -587,7 +611,7 @@ class TTSController(
     // ========== Content ==========
     
     private suspend fun loadChapter(bookId: Long, chapterId: Long, startParagraph: Int) {
-        Log.warn { "$TAG: loadChapter(bookId=$bookId, chapterId=$chapterId, startParagraph=$startParagraph)" }
+        Log.debug { "$TAG: loadChapter(bookId=$bookId, chapterId=$chapterId, startParagraph=$startParagraph)" }
         
         // Check if this EXACT chapter is already loaded with content - skip reload to preserve chunk mode
         // IMPORTANT: Must check BOTH bookId AND chapterId to avoid showing stale data from different book
@@ -597,11 +621,11 @@ class TTSController(
         val hasContent = currentState.paragraphs.isNotEmpty()
         
         if (sameBook && sameChapter && hasContent) {
-            Log.warn { "$TAG: loadChapter - same book/chapter already loaded, skipping reload" }
+            Log.debug { "$TAG: loadChapter - same book/chapter already loaded, skipping reload" }
             // Just ensure chunk mode is applied if pending
             val pendingWordCount = pendingChunkWordCount
             if (pendingWordCount != null && pendingWordCount > 0 && !currentState.chunkModeEnabled) {
-                Log.warn { "$TAG: loadChapter - applying pending chunk mode" }
+                Log.debug { "$TAG: loadChapter - applying pending chunk mode" }
                 enableChunkMode(pendingWordCount)
             }
             return
@@ -609,7 +633,7 @@ class TTSController(
         
         // Different book or chapter - must reload
         if (!sameBook || !sameChapter) {
-            Log.warn { "$TAG: loadChapter - different book/chapter, clearing old state (old: book=${currentState.book?.id}, chapter=${currentState.chapter?.id})" }
+            Log.debug { "$TAG: loadChapter - different book/chapter, clearing old state (old: book=${currentState.book?.id}, chapter=${currentState.chapter?.id})" }
         }
         
         // Stop current playback and clear engine state
@@ -658,12 +682,12 @@ class TTSController(
                 )
             }
             
-            Log.warn { "$TAG: Chapter loaded - ${content.paragraphs.size} paragraphs" }
+            Log.debug { "$TAG: Chapter loaded - ${content.paragraphs.size} paragraphs" }
             
             // Apply pending chunk mode if set
             val pendingWordCount = pendingChunkWordCount
             if (pendingWordCount != null && pendingWordCount > 0) {
-                Log.warn { "$TAG: Applying pending chunk mode with $pendingWordCount words" }
+                Log.debug { "$TAG: Applying pending chunk mode with $pendingWordCount words" }
                 enableChunkMode(pendingWordCount)
             }
             
@@ -680,7 +704,7 @@ class TTSController(
      */
     private suspend fun updateCachedParagraphsState(paragraphs: List<String>) {
         val cachedIndices = engine?.getCachedIndices(paragraphs) ?: emptySet()
-        Log.warn { "$TAG: updateCachedParagraphsState - ${cachedIndices.size} paragraphs cached" }
+        Log.debug { "$TAG: updateCachedParagraphsState - ${cachedIndices.size} paragraphs cached" }
         _state.update { it.copy(cachedParagraphs = cachedIndices) }
     }
     
@@ -705,11 +729,11 @@ class TTSController(
         val currentParagraph = currentState.currentParagraphIndex
         
         if (bookId == null || chapterId == null) {
-            Log.warn { "$TAG: refreshContent - no chapter loaded, skipping" }
+            Log.debug { "$TAG: refreshContent - no chapter loaded, skipping" }
             return
         }
         
-        Log.warn { "$TAG: refreshContent - reloading chapter $chapterId" }
+        Log.debug { "$TAG: refreshContent - reloading chapter $chapterId" }
         
         // Force reload by clearing the current state first
         _state.update { it.copy(paragraphs = emptyList()) }
@@ -721,7 +745,7 @@ class TTSController(
     // ========== Translation ==========
     
     private fun setTranslatedContent(paragraphs: List<String>?) {
-        Log.warn { "$TAG: setTranslatedContent(${paragraphs?.size ?: 0} paragraphs)" }
+        Log.debug { "$TAG: setTranslatedContent(${paragraphs?.size ?: 0} paragraphs)" }
         _state.update { 
             it.copy(
                 translatedParagraphs = paragraphs,
@@ -731,19 +755,19 @@ class TTSController(
     }
     
     private fun toggleTranslation(show: Boolean) {
-        Log.warn { "$TAG: toggleTranslation($show)" }
+        Log.debug { "$TAG: toggleTranslation($show)" }
         _state.update { it.copy(showTranslation = show) }
     }
     
     private fun toggleBilingualMode(enabled: Boolean) {
-        Log.warn { "$TAG: toggleBilingualMode($enabled)" }
+        Log.debug { "$TAG: toggleBilingualMode($enabled)" }
         _state.update { it.copy(bilingualMode = enabled) }
     }
     
     // ========== Sentence Highlighting ==========
     
     private fun setSentenceHighlight(enabled: Boolean) {
-        Log.warn { "$TAG: setSentenceHighlight($enabled)" }
+        Log.debug { "$TAG: setSentenceHighlight($enabled)" }
         _state.update { it.copy(sentenceHighlightEnabled = enabled) }
     }
     
@@ -777,7 +801,7 @@ class TTSController(
         val currentState = _state.value
         if (currentState.engineType == type) return
         
-        Log.warn { "$TAG: setEngine($type) - switching from ${currentState.engineType}" }
+        Log.debug { "$TAG: setEngine($type) - switching from ${currentState.engineType}" }
         
         // Stop current engine
         engine?.stop()
@@ -793,7 +817,7 @@ class TTSController(
     }
     
     private fun setGradioConfig(config: GradioConfig) {
-        Log.warn { "$TAG: setGradioConfig(${config.name})" }
+        Log.debug { "$TAG: setGradioConfig(${config.name})" }
         
         gradioConfig = config
         
@@ -820,11 +844,11 @@ class TTSController(
         pendingChunkWordCount = targetWordCount
         
         if (!currentState.hasContent) {
-            Log.warn { "$TAG: enableChunkMode - no content yet, storing pending word count: $targetWordCount" }
+            Log.debug { "$TAG: enableChunkMode - no content yet, storing pending word count: $targetWordCount" }
             return
         }
         
-        Log.warn { "$TAG: enableChunkMode(targetWordCount=$targetWordCount)" }
+        Log.debug { "$TAG: enableChunkMode(targetWordCount=$targetWordCount)" }
         
         // Clear engine's internal cache when re-chunking (chunks will be different)
         engine?.clearState()
@@ -861,11 +885,11 @@ class TTSController(
             )
         }
         
-        Log.warn { "$TAG: Chunk mode enabled - ${result.chunks.size} chunks, current=$currentChunkIndex, cached=${cachedChunks.size}" }
+        Log.debug { "$TAG: Chunk mode enabled - ${result.chunks.size} chunks, current=$currentChunkIndex, cached=${cachedChunks.size}" }
     }
     
     private fun disableChunkMode() {
-        Log.warn { "$TAG: disableChunkMode()" }
+        Log.debug { "$TAG: disableChunkMode()" }
         
         // Clear pending chunk word count so it won't be re-enabled on next loadChapter
         pendingChunkWordCount = null
@@ -902,7 +926,7 @@ class TTSController(
             )
         }
         
-        Log.warn { "$TAG: nextChunk() -> $nextChunkIndex" }
+        Log.debug { "$TAG: nextChunk() -> $nextChunkIndex" }
         
         if (wasPlaying) {
             playChunk()
@@ -927,7 +951,7 @@ class TTSController(
             )
         }
         
-        Log.warn { "$TAG: previousChunk() -> $prevChunkIndex" }
+        Log.debug { "$TAG: previousChunk() -> $prevChunkIndex" }
         
         if (wasPlaying) {
             playChunk()
@@ -953,7 +977,7 @@ class TTSController(
             )
         }
         
-        Log.warn { "$TAG: jumpToChunk($index)" }
+        Log.debug { "$TAG: jumpToChunk($index)" }
         
         if (wasPlaying) {
             playChunk()
@@ -978,13 +1002,13 @@ class TTSController(
         
         // Auto-initialize engine if it was released
         if (engine == null) {
-            Log.warn { "$TAG: playChunk() - Engine is null, reinitializing..." }
+            Log.debug { "$TAG: playChunk() - Engine is null, reinitializing..." }
             initialize()
         }
         
         if (engine?.isReady() != true) {
             // Engine is initializing (async), queue the play for when it's ready
-            Log.warn { "$TAG: playChunk() - Engine not ready, queuing play" }
+            Log.debug { "$TAG: playChunk() - Engine not ready, queuing play" }
             pendingPlay = true
             _state.update { it.copy(playbackState = PlaybackState.LOADING) }
             return
@@ -999,12 +1023,12 @@ class TTSController(
         // Check if this chunk is cached (for offline playback)
         if (chapterId != null && cacheUseCase != null) {
             val isCached = cacheUseCase.isChunkCached(chapterId, chunkIndex)
-            Log.warn { "$TAG: playChunk() - chunk $chunkIndex, cached=$isCached" }
+            Log.debug { "$TAG: playChunk() - chunk $chunkIndex, cached=$isCached" }
             
             if (isCached) {
                 val cachedAudio = cacheUseCase.getChunkAudio(chapterId, chunkIndex)
                 if (cachedAudio != null) {
-                    Log.warn { "$TAG: playChunk() - Playing cached audio: ${cachedAudio.size} bytes" }
+                    Log.debug { "$TAG: playChunk() - Playing cached audio: ${cachedAudio.size} bytes" }
                     _state.update { it.copy(isUsingCachedAudio = true) }
                     
                     // Play cached audio directly via engine
@@ -1012,7 +1036,7 @@ class TTSController(
                     if (played) {
                         return
                     }
-                    Log.warn { "$TAG: playChunk() - Engine doesn't support cached audio playback, falling back to text" }
+                    Log.debug { "$TAG: playChunk() - Engine doesn't support cached audio playback, falling back to text" }
                 }
             }
         }
@@ -1030,7 +1054,7 @@ class TTSController(
             chunk.text
         }
         
-        Log.warn { "$TAG: playChunk() - chunk $chunkIndex, text length=${textToSpeak.length}, useTranslation=${currentState.showTranslation}" }
+        Log.debug { "$TAG: playChunk() - chunk $chunkIndex, text length=${textToSpeak.length}, useTranslation=${currentState.showTranslation}" }
         
         engine?.speak(textToSpeak, utteranceId)
         
@@ -1068,7 +1092,7 @@ class TTSController(
         }
         
         if (itemsToPrecache.isNotEmpty()) {
-            Log.warn { "$TAG: precacheNextChunks() - precaching ${itemsToPrecache.size} chunks" }
+            Log.debug { "$TAG: precacheNextChunks() - precaching ${itemsToPrecache.size} chunks" }
             engine?.precacheNext(itemsToPrecache)
         }
     }

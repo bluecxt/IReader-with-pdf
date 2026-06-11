@@ -2,11 +2,11 @@ package ireader.presentation.ui.core.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +36,7 @@ fun EmptyScreen(
     modifier: Modifier = Modifier,
     text: String,
     icon: ImageVector? = null,
+    onButtonClicked : (() -> Unit)? = {}
 ) {
     val kaomoji = remember { kaomojis.random() }
 
@@ -72,5 +73,14 @@ fun EmptyScreen(
                 .padding(top = 16.dp)
                 .padding(horizontal = 16.dp)
         )
+        Spacer(modifier = Modifier.height(8.dp))
+        if (onButtonClicked != null ){
+            androidx.compose.material3.Button(
+                onClick = onButtonClicked
+            ) {
+                Text(text = "Add Sources")
+            }
+        }
+
     }
 }

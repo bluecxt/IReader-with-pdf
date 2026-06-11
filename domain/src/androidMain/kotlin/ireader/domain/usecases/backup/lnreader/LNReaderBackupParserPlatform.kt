@@ -105,28 +105,20 @@ suspend fun parseBackupStreamingPlatform(
     callback: LNReaderBackupStreamCallback
 ) {
     var novelCount = 0
-    var totalNovels = 0
-    
-    // First pass: count total novels for progress reporting
-    inputStream.mark(Int.MAX_VALUE)
-    ZipInputStream(inputStream).use { zipIn ->
+    var entryCount = 0
+
+    // Use BufferedInputStream for better read performance
+    val bufferedStream = if (inputStream is java.io.BufferedInputStream) inputStream
+        else java.io.BufferedInputStream(inputStream, 65536)
+
+    // Single pass: process entries as we read them.
+    ZipInputStream(bufferedStream).use { zipIn ->
         var entry = zipIn.nextEntry
         while (entry != null) {
-            if (entry.name.startsWith("NovelAndChapters/") && entry.name.endsWith(".json")) {
-                totalNovels++
-            }
-            zipIn.closeEntry()
-            entry = zipIn.nextEntry
-        }
-    }
-    inputStream.reset()
-    
-    // Second pass: process entries
-    ZipInputStream(inputStream).use { zipIn ->
-        var entry = zipIn.nextEntry
-        while (entry != null) {
+            entryCount++
             val entryName = entry.name
-            
+            ireader.core.log.Log.info { "LNReader parse: entry #$entryCount: $entryName (${entry.size} bytes)" }
+
             when {
                 entryName == "Version.json" -> {
                     val content = zipIn.readBytes().decodeToString()
@@ -151,6 +143,7 @@ suspend fun parseBackupStreamingPlatform(
                     val settings = try {
                         json.decodeFromString<Map<String, String>>(content)
                     } catch (e: Exception) {
+                        ireader.core.log.Log.warn(e, "Failed to parse Setting.json")
                         emptyMap()
                     }
                     callback.onSettings(settings)
@@ -159,19 +152,185 @@ suspend fun parseBackupStreamingPlatform(
                     val content = zipIn.readBytes().decodeToString()
                     try {
                         val novel = json.decodeFromString<LNReaderNovel>(content)
+                        ireader.core.log.Log.info { "LNReader parse: novel #$novelCount: ${novel.name} (${novel.chapters.size} chapters)" }
                         callback.onNovel(novel)
                         novelCount++
-                        callback.onProgress(novelCount, totalNovels)
+                        callback.onProgress(novelCount, novelCount)
                     } catch (e: Exception) {
                         ireader.core.log.Log.warn(e, "Failed to parse novel: $entryName")
                     }
                 }
             }
-            
+
+            // Skip any remaining bytes in this entry (important for large entries like download.zip)
+            if (entryName != "Version.json" && entryName != "Category.json" && 
+                entryName != "Setting.json" && 
+                !(entryName.startsWith("NovelAndChapters/") && entryName.endsWith(".json"))) {
+                // For non-matching entries, skip the data efficiently
+                val skipBuffer = ByteArray(8192)
+                while (zipIn.read(skipBuffer) != -1) { /* skip */ }
+            }
             zipIn.closeEntry()
             entry = zipIn.nextEntry
         }
     }
+    ireader.core.log.Log.info { "LNReader parse: finished. Total entries: $entryCount, novels: $novelCount" }
+}
+
+/**
+ * Extract chapter content from download.zip contained in the backup.
+ *
+ * The download.zip contains HTML files at: Novels/{source}/{novelId}/{chapterId}/index.html
+ *
+ * @param backupBytes The main backup ZIP file bytes
+ * @return Map of chapterId (Int) to HTML content string
+ */
+fun extractChapterContentFromDownloadZip(backupBytes: ByteArray): Map<Int, String> {
+    val chapterContentMap = mutableMapOf<Int, String>()
+
+    try {
+        ZipInputStream(ByteArrayInputStream(backupBytes)).use { zipIn ->
+            var entry = zipIn.nextEntry
+            while (entry != null) {
+                // Look for download.zip entry
+                if (entry.name == "download.zip") {
+                    ireader.core.log.Log.info { "LNReader: Found download.zip (${entry.size} bytes), extracting chapter content..." }
+
+                    // Read only the bytes for this entry
+                    val downloadZipBytes = if (entry.size > 0) {
+                        val bytes = ByteArray(entry.size.toInt())
+                        var offset = 0
+                        while (offset < bytes.size) {
+                            val read = zipIn.read(bytes, offset, bytes.size - offset)
+                            if (read == -1) break
+                            offset += read
+                        }
+                        bytes
+                    } else {
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val tempBuffer = ByteArray(8192)
+                        var bytesRead: Int
+                        while (zipIn.read(tempBuffer).also { bytesRead = it } != -1) {
+                            buffer.write(tempBuffer, 0, bytesRead)
+                        }
+                        buffer.toByteArray()
+                    }
+                    ireader.core.log.Log.info { "LNReader: Read ${downloadZipBytes.size} bytes from download.zip" }
+
+                    // Parse download.zip
+                    ZipInputStream(ByteArrayInputStream(downloadZipBytes)).use { downloadZipIn ->
+                        var downloadEntry = downloadZipIn.nextEntry
+                        while (downloadEntry != null) {
+                            val entryName = downloadEntry.name
+
+                            // Look for index.html files in Novels/{source}/{novelId}/{chapterId}/index.html
+                            if (entryName.startsWith("Novels/") && entryName.endsWith("/index.html")) {
+                                try {
+                                    // Extract chapter ID from path: Novels/{source}/{novelId}/{chapterId}/index.html
+                                    val parts = entryName.removePrefix("Novels/")
+                                        .removeSuffix("/index.html")
+                                        .split("/")
+
+                                    if (parts.size == 3) {
+                                        // parts[0] = source (e.g., "royalroad")
+                                        // parts[1] = novelId in download.zip (e.g., "1")
+                                        // parts[2] = chapterId (e.g., "414853")
+                                        val chapterId = parts[2].toIntOrNull()
+                                        if (chapterId != null) {
+                                            val htmlContent = downloadZipIn.readBytes().decodeToString()
+                                            chapterContentMap[chapterId] = htmlContent
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    ireader.core.log.Log.warn(e, "Failed to extract chapter content from: $entryName")
+                                }
+                            } else {
+                                // Skip non-matching entries
+                                val skipBuffer = ByteArray(8192)
+                                while (downloadZipIn.read(skipBuffer) != -1) { /* skip */ }
+                            }
+
+                            downloadZipIn.closeEntry()
+                            downloadEntry = downloadZipIn.nextEntry
+                        }
+                    }
+
+                    ireader.core.log.Log.info { "LNReader: Extracted content for ${chapterContentMap.size} chapters from download.zip" }
+                } else {
+                    // Skip non-download.zip entries
+                    val skipBuffer = ByteArray(8192)
+                    while (zipIn.read(skipBuffer) != -1) { /* skip */ }
+                }
+
+                zipIn.closeEntry()
+                entry = zipIn.nextEntry
+            }
+        }
+    } catch (e: Exception) {
+        ireader.core.log.Log.warn(e, "Failed to extract download.zip content", e)
+    }
+
+    return chapterContentMap
+}
+
+/**
+ * Convert HTML content to a list of Text pages.
+ * Extracts text from paragraph tags and creates Text pages.
+ */
+fun htmlToTextPages(html: String): List<ireader.core.source.model.Page> {
+    val pages = mutableListOf<ireader.core.source.model.Page>()
+
+    // Simple HTML to text extraction
+    // Look for content between <p> tags or other text-containing elements
+    val paragraphRegex = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
+    val matches = paragraphRegex.findAll(html)
+
+    for (match in matches) {
+        var text = match.groupValues[1]
+            .replace(Regex("<[^>]+>"), "") // Remove inner HTML tags
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .trim()
+
+        // Decode HTML entities (basic)
+        text = text.replace(Regex("&#(\\d+);")) { result ->
+            val code = result.groupValues[1].toIntOrNull()
+            if (code != null) code.toChar().toString() else result.value
+        }
+
+        if (text.isNotBlank()) {
+            pages.add(ireader.core.source.model.Text(text))
+        }
+    }
+
+    // If no paragraphs found, try to extract text from the body
+    if (pages.isEmpty()) {
+        val bodyRegex = Regex("<body[^>]*>(.*?)</body>", RegexOption.DOT_MATCHES_ALL)
+        val bodyMatch = bodyRegex.find(html)
+        if (bodyMatch != null) {
+            var text = bodyMatch.groupValues[1]
+                .replace(Regex("<[^>]+>"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            if (text.isNotBlank()) {
+                pages.add(ireader.core.source.model.Text(text))
+            }
+        }
+    }
+
+    return pages
+}
+
+/**
+ * Android implementation of chapter content extraction from download.zip.
+ */
+actual fun extractChapterContentPlatform(backupBytes: ByteArray): Map<Int, String> {
+    return extractChapterContentFromDownloadZip(backupBytes)
 }
 
 /**

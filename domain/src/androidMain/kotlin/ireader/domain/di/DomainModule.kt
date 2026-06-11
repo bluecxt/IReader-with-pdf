@@ -17,6 +17,9 @@ import ireader.domain.services.library_update_service.LibraryUpdatesService
 import ireader.domain.services.tts_service.TTSStateImpl
 import ireader.domain.services.update_service.UpdateService
 import ireader.domain.usecases.backup.AutomaticBackup
+import ireader.domain.usecases.backup.lnreader.ImportLNReaderBackup
+import ireader.domain.usecases.backup.lnreader.LNReaderStreamingImporter
+import ireader.domain.usecases.backup.lnreader.createAndroidStreamingImporter
 import ireader.domain.usecases.epub.EpubCreator
 import ireader.domain.usecases.epub.ImportEpub
 import ireader.domain.usecases.pdf.ImportPdf
@@ -313,6 +316,20 @@ actual val DomainModule = module {
         )
     }
     
+    // LNReader streaming importer for Android
+    factory<LNReaderStreamingImporter> {
+        ImportLNReaderBackup(
+            parser = get(),
+            sourceMapper = get(),
+            bookRepository = get(),
+            chapterRepository = get(),
+            categoryRepository = get(),
+            bookCategoryRepository = get(),
+            transactions = get(),
+            fileSaver = get()
+        ).createAndroidStreamingImporter()
+    }
+
     // Gradio TTS Manager for online TTS services
     single<ireader.domain.services.tts_service.GradioTTSManager> {
         val appPrefs: ireader.domain.preferences.prefs.AppPreferences = get()

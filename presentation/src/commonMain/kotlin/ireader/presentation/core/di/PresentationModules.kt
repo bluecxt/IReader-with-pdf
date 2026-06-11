@@ -201,30 +201,13 @@ val PresentationModules = module {
     
     // Authentication ViewModels
     factory  { ireader.presentation.ui.settings.auth.AuthViewModel(getOrNull()) }
-    factory  { ireader.presentation.ui.settings.auth.ProfileViewModel(getOrNull(), getOrNull(), getOrNull()) }
+    factory  { ireader.presentation.ui.settings.auth.ProfileViewModel(getOrNull(), getOrNull(), getOrNull(), getOrNull(), getOrNull(), getOrNull(), getOrNull(), getOrNull(), getOrNull()) }
     
     // Sync ViewModels
     factory  { ireader.presentation.ui.settings.sync.SupabaseConfigViewModel(get(), get(), getOrNull(), getOrNull()) }
     
     // Cloudflare Bypass Settings ViewModel
     factory { ireader.presentation.ui.settings.cloudflare.CloudflareBypassSettingsViewModel(get(), get(), get()) }
-    
-    // Badge ViewModels
-    factory { ireader.presentation.ui.settings.badges.store.BadgeStoreViewModel(get(), get()) }
-    factory { ireader.presentation.ui.settings.badges.nft.NFTBadgeViewModel(get(), get(), get(), get(), get()) }
-    factory { ireader.presentation.ui.settings.badges.manage.BadgeManagementViewModel(get(), get(), get()) }
-    
-    // Admin ViewModels
-    factory { 
-        ireader.presentation.ui.settings.admin.AdminBadgeVerificationViewModel(
-            getPendingPaymentProofsUseCase = get(),
-            verifyPaymentProofUseCase = get(),
-            getCurrentUser = {
-                val getCurrentUserUseCase: ireader.domain.usecases.remote.GetCurrentUserUseCase = get()
-                getCurrentUserUseCase().getOrNull()
-            }
-        )
-    }
     
     // Admin User Panel ViewModel
     factory {
